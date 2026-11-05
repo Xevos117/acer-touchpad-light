@@ -60,6 +60,42 @@ impl Effect {
     }
 }
 
+impl Effect {
+    /// Index of the frame the firmware is showing `elapsed_ms` after the effect
+    /// started (wrapping around for looping effects).
+    pub fn frame_at(&self, elapsed_ms: u64) -> usize {
+        let cycle = self.cycle_ms().max(1);
+        let mut t = if self.looping {
+            elapsed_ms % cycle
+        } else {
+            elapsed_ms.min(cycle - 1)
+        };
+        for (i, f) in self.frames.iter().enumerate() {
+            let d = u64::from(crate::protocol::duration_byte(f.ms)) * 10;
+            if t < d {
+                return i;
+            }
+            t -= d;
+        }
+        self.frames.len() - 1
+    }
+
+    /// A non-looping "graceful ending": one more cycle of this effect, starting
+    /// from `start` (the frame currently shown) and fading linearly to dark.
+    pub fn fade_out(&self, start: usize) -> Effect {
+        let n = self.frames.len();
+        let steps = n.max(2);
+        let frames = (0..steps)
+            .map(|i| {
+                let f = self.frames[(start + i) % n];
+                let k = 1.0 - (i + 1) as f64 / steps as f64; // last frame -> 0
+                Frame::new(f.levels.map(|l| (f64::from(l) * k).round() as u8), f.ms)
+            })
+            .collect();
+        effect(&self.name, "fade-out", false, frames)
+    }
+}
+
 /// Names of all built-in effects (`spin` is an alias of `circle`).
 pub const BUILTIN_NAMES: &[&str] = &[
     "steady", "breath", "blink", "circle", "spin", "comet", "pulse", "twinkle", "wave",
@@ -329,6 +365,32 @@ mod tests {
             let min = t.frames.iter().map(|f| f.levels[k]).min().unwrap();
             assert!(max >= 50 && min <= 10, "lamp {k}: {min}..{max}");
         }
+    }
+
+    #[test]
+    fn frame_at_tracks_phase() {
+        let c = builtin("circle").unwrap(); // 32 frames x 60 ms
+        assert_eq!(c.frame_at(0), 0);
+        assert_eq!(c.frame_at(59), 0);
+        assert_eq!(c.frame_at(60), 1);
+        assert_eq!(c.frame_at(c.cycle_ms() + 125), 2); // wraps around
+    }
+
+    #[test]
+    fn fade_out_continues_and_ends_dark() {
+        let c = builtin("circle").unwrap();
+        let f = c.fade_out(5);
+        assert!(!f.looping);
+        assert_eq!(f.frames.len(), c.frames.len());
+        assert!(f.validate().is_ok());
+        // continues from the current position...
+        let first = f.frames[0].levels;
+        let orig = c.frames[5].levels;
+        for k in 0..4 {
+            assert!(first[k] <= orig[k] && (orig[k] == 0 || first[k] > 0));
+        }
+        // ...and ends completely dark
+        assert_eq!(f.frames.last().unwrap().levels, [0; 4]);
     }
 
     #[test]

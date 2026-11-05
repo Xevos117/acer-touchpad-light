@@ -122,20 +122,54 @@ struct Player {
     light: Light,
     brightness: u8,
     reenable: bool,
+    /// Looping effect currently playing and when it started (for fade-out phase).
+    playing: Option<(Effect, Instant)>,
+    /// A fade-out is running; send terminate once it is over.
+    fade_until: Option<Instant>,
 }
 
 impl Player {
     fn show(&mut self, effect: Option<&Effect>) -> std::io::Result<()> {
         match effect {
-            None => self.light.terminate(),
+            None => self.end(),
             Some(e) => {
                 if self.reenable && matches!(self.light.is_enabled(), Ok(false)) {
                     eprintln!("lighting was disabled, enabling it");
                     self.light.enable()?;
                 }
-                self.light.play(e, self.brightness)
+                self.fade_until = None;
+                self.light.play(e, self.brightness)?;
+                self.playing = e.looping.then(|| (e.clone(), Instant::now()));
+                Ok(())
             }
         }
+    }
+
+    /// Ends the current effect: looping effects fade out from where they are,
+    /// anything else is terminated right away.
+    fn end(&mut self) -> std::io::Result<()> {
+        match self.playing.take() {
+            Some((e, started)) => {
+                let elapsed = started.elapsed().as_millis() as u64;
+                let fade = e.fade_out(e.frame_at(elapsed));
+                self.light.play(&fade, self.brightness)?;
+                self.fade_until = Some(Instant::now() + Duration::from_millis(fade.cycle_ms()));
+                Ok(())
+            }
+            None => {
+                self.fade_until = None;
+                self.light.terminate()
+            }
+        }
+    }
+
+    /// Sends the pending terminate once a fade-out has finished.
+    fn tick(&mut self, now: Instant) -> std::io::Result<()> {
+        if self.fade_until.is_some_and(|t| now >= t) {
+            self.fade_until = None;
+            self.light.terminate()?;
+        }
+        Ok(())
     }
 }
 
@@ -191,6 +225,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
         light: Light::new(cfg.device.clone()),
         brightness: cfg.brightness,
         reenable: cfg.reenable,
+        playing: None,
+        fade_until: None,
     };
     let mut npu = NpuMonitor::new(cfg.npu.sysfs.clone());
     let poll = Duration::from_millis(cfg.npu.poll_ms);
@@ -258,6 +294,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
             next_poll = now + poll;
         }
 
+        if let Err(e) = player.tick(now) {
+            eprintln!("terminate after fade-out failed: {e}");
+        }
+
         let want = decide(
             key_until,
             npu_effect.is_some() && npu.active(now, idle),
@@ -297,6 +337,14 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
     eprintln!("shutting down, stopping effect");
     if let Err(e) = player.show(None) {
+        eprintln!("stop failed: {e}");
+    }
+    // let a fade-out finish (bounded), then make sure everything is off
+    if let Some(t) = player.fade_until.take() {
+        let wait = t.saturating_duration_since(Instant::now());
+        std::thread::sleep(wait.min(Duration::from_secs(3)));
+    }
+    if let Err(e) = player.light.terminate() {
         eprintln!("terminate failed: {e}");
     }
     Ok(())
