@@ -32,7 +32,8 @@ idle_ms = 2000
 # Copilot key (on Linux it is reported as Meta + Shift + F23).
 [[key]]
 keys = ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_F23"]
-effect = "pulse"
+effect = "circle"
+duration_ms = 3000
 
 # Example of another combo: Ctrl+Alt+Space shows the comet for 3 s.
 # [[key]]

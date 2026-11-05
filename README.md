@@ -122,8 +122,8 @@ idle_ms = 2000            # keep the effect until the NPU has been idle this lon
 
 [[key]]                   # Copilot key
 keys = ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_F23"]
-effect = "pulse"
-# duration_ms = 0         # 0: one playthrough (non-looping) or 3 s (looping)
+effect = "circle"
+duration_ms = 3000        # 0: one playthrough (non-looping) or 3 s (looping)
 
 [effects.heartbeat]       # custom effect: [l1, l2, l3, l4, ms] per frame
 loop = true

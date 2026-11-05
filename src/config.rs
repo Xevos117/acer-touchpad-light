@@ -93,7 +93,7 @@ pub struct KeyBinding {
 }
 
 fn default_key_effect() -> String {
-    "pulse".into()
+    "circle".into()
 }
 
 fn default_keys() -> Vec<KeyBinding> {
