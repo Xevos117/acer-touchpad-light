@@ -1,0 +1,12 @@
+# OPTIONAL: lets members of the group "tplight" drive the touchpad lighting
+# without root (e.g. `tplight play circle` as a normal user).
+# The systemd daemon runs as root and does not need this rule.
+#
+#   sudo groupadd --system tplight
+#   sudo usermod -aG tplight "$USER"      # log out and in again
+#   sudo cp 70-acer-touchpad-light.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+#
+# Note: write access to this hidraw node also allows sending any other feature
+# report to the touchpad (tplight itself only ever writes report 0x02).
+SUBSYSTEM=="hidraw", KERNELS=="0018:093A:3838.*", GROUP="tplight", MODE="0660"

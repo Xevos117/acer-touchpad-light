@@ -1,0 +1,65 @@
+# acer-touchpad-light configuration
+# Installed at /etc/acer-touchpad-light/config.toml and read by `tplight daemon`.
+# Every key is optional; the values shown are the defaults unless noted.
+
+# Global brightness scale in percent (0..100), applied to every effect.
+brightness = 100
+
+# hidraw node of the touchpad. Auto-detected when omitted (recommended).
+# device = "/dev/hidraw1"
+
+# If the firmware reports lighting as disabled (report 0x01), enable it again
+# before playing an effect.
+reenable = true
+
+# --- NPU activity --------------------------------------------------------------
+# The intel_vpu driver exposes a cumulative busy-time counter in
+# /sys/class/accel/accel*/device/npu_busy_time_us. The NPU counts as active
+# while the counter grows; the effect stays on until it has been idle for idle_ms.
+[npu]
+enabled = true
+effect = "breath"     # any built-in or custom effect (should be a looping one)
+poll_ms = 250
+idle_ms = 2000
+# sysfs = "/sys/class/accel/accel0/device/npu_busy_time_us"
+
+# --- Key combos ----------------------------------------------------------------
+# Each [[key]] fires when all its keys are held down together (order does not
+# matter). Names are evdev key names (see /usr/include/linux/input-event-codes.h
+# or run `sudo tplight keys`); the KEY_ prefix is optional.
+# duration_ms = 0 means: one playthrough for non-looping effects, 3 s for looping ones.
+
+# Copilot key (on Linux it is reported as Meta + Shift + F23).
+[[key]]
+keys = ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_F23"]
+effect = "pulse"
+
+# Example of another combo: Ctrl+Alt+Space shows the comet for 3 s.
+# [[key]]
+# keys = ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_SPACE"]
+# effect = "comet"
+# duration_ms = 3000
+
+# --- Custom effects --------------------------------------------------------------
+# frames = [[l1, l2, l3, l4, ms], ...]
+#   l1..l4: lamp brightness 0..100 (L1 top-right, L2 bottom-right,
+#           L3 bottom-left, L4 top-left - probable physical layout)
+#   ms:     frame duration, 10..2550 ms (10 ms resolution)
+# At most 48 frames. loop = true repeats the effect until it is stopped.
+[effects.heartbeat]
+description = "double beat, then a pause"
+loop = true
+frames = [
+  [100, 100, 100, 100, 80],
+  [ 20,  20,  20,  20, 120],
+  [ 80,  80,  80,  80, 80],
+  [  0,   0,   0,   0, 700],
+]
+
+[effects.diagonal]
+description = "alternating diagonals"
+loop = true
+frames = [
+  [100,   0, 100,   0, 300],
+  [  0, 100,   0, 100, 300],
+]

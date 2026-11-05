@@ -1,0 +1,30 @@
+[Unit]
+Description=Acer Swift 14 AI touchpad lighting (NPU activity and Copilot key effects)
+Documentation=https://github.com/Xevos117/acer-touchpad-light
+After=systemd-udev-settle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tplight daemon --config /etc/acer-touchpad-light/config.toml
+# The daemon terminates the running effect on SIGTERM.
+KillSignal=SIGTERM
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=3
+
+# Needs root for /dev/hidraw* and /dev/input/event*; restrict everything else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
