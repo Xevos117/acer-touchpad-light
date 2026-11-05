@@ -18,3 +18,4 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"
 toml = "0.8"
+toml_edit = "0.22"

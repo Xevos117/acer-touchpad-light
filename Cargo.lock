@@ -12,6 +12,7 @@ dependencies = [
  "serde",
  "signal-hook",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

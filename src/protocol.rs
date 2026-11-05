@@ -1,9 +1,9 @@
 //! Encoding of the lighting feature report (ID 0x02) and the high-level device handle.
 //!
 //! Report 0x02 is 7 bytes: `02 L1 L2 L3 L4 D F`
-//! * `L1..L4` – brightness of the four lamps, 0..=100
-//! * `D`      – frame duration in 10 ms units (1..=255)
-//! * `F`      – flags: 0x02 first frame, 0x04 last frame, 0x08 loop,
+//! * `L1..L4`: brightness of the four lamps, 0..=100
+//! * `D`: frame duration in 10 ms units (1..=255)
+//! * `F`: flags: 0x02 first frame, 0x04 last frame, 0x08 loop,
 //!   0x10 status command (bit 0 = on/off)
 //!
 //! See `docs/PROTOCOL.md` for details.

@@ -1,5 +1,6 @@
 //! tplight - control the "AI lighting" LEDs of the Acer Swift 14 AI touchpad.
 
+mod acer;
 mod config;
 mod daemon;
 mod effects;
@@ -70,6 +71,26 @@ enum Cmd {
     },
     /// Print key names as they are pressed (helps writing [[key]] combos)
     Keys,
+    /// Convert the animations of the Acer Light Service (Windows) into custom effects
+    ///
+    /// FRAMES_DIR is the "Frames" folder copied from your own Windows install
+    /// (C:\Windows\System32\DriverStore\FileRepository\
+    /// acerlightservicesoftwarecomponent.inf_amd64_*\Frames). Circle_R becomes
+    /// "acer-circle", Twinkle_R "acer-twinkle", and so on. Without --out the
+    /// effects are printed as TOML.
+    ImportAcer {
+        #[arg(value_name = "FRAMES_DIR")]
+        frames_dir: PathBuf,
+        /// Add the effects to this config file (other content is kept, a .bak copy is made)
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Replace effects with the same names that are already in the file
+        #[arg(long, requires = "out")]
+        force: bool,
+        /// Also use them: NPU -> acer-twinkle, Copilot key -> acer-circle
+        #[arg(long, requires = "out")]
+        activate: bool,
+    },
     /// Run the background service (NPU activity + key combos)
     Daemon {
         #[arg(long, value_name = "PATH", default_value = config::DEFAULT_PATH)]
@@ -164,6 +185,42 @@ fn keys() -> Result<(), String> {
     }
 }
 
+fn import_acer(
+    dir: &std::path::Path,
+    out: Option<&std::path::Path>,
+    force: bool,
+    activate: bool,
+) -> Result<(), String> {
+    let imported = acer::import_dir(dir)?;
+    let snippet = acer::to_toml(&imported, dir);
+    let Some(out) = out else {
+        print!("{}", snippet.trim_start());
+        return Ok(());
+    };
+    let existing = match std::fs::read_to_string(out) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("{}: {e}", out.display())),
+    };
+    let (text, notes) = acer::merge(&existing, &imported, &snippet, force, activate)?;
+    acer::write_config(out, &text)?;
+    for i in &imported {
+        println!(
+            "{:<14} <- {} ({} frames, {} fps, {} ms)",
+            i.effect.name,
+            i.source,
+            i.effect.frames.len(),
+            i.fps,
+            i.effect.cycle_ms()
+        );
+    }
+    for n in notes {
+        println!("{n}");
+    }
+    println!("written to {}", out.display());
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     let io = |e: std::io::Error| e.to_string();
     match cli.cmd {
@@ -202,7 +259,7 @@ fn run(cli: Cli) -> Result<(), String> {
             let cfg = Config::load(&config)?;
             for (e, custom) in cfg.library()?.all() {
                 println!(
-                    "{:<10} {:>2} frames  {:>5} ms  {:<8} {}{}",
+                    "{:<12} {:>2} frames  {:>5} ms  {:<8} {}{}",
                     e.name,
                     e.frames.len(),
                     e.cycle_ms(),
@@ -226,6 +283,12 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Cmd::Keys => keys(),
+        Cmd::ImportAcer {
+            frames_dir,
+            out,
+            force,
+            activate,
+        } => import_acer(&frames_dir, out.as_deref(), force, activate),
         Cmd::Daemon { config, check } => {
             let mut cfg = Config::load(&config)?;
             if check {

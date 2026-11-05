@@ -15,10 +15,12 @@ reenable = true
 # --- NPU activity --------------------------------------------------------------
 # The intel_vpu driver exposes a cumulative busy-time counter in
 # /sys/class/accel/accel*/device/npu_busy_time_us. The NPU counts as active
-# while the counter grows; the effect stays on until it has been idle for idle_ms.
+# while the counter grows. The effect is repeated while the NPU is busy (even if
+# it is a one-shot effect). Once the NPU has been idle for idle_ms, the effect
+# stops at the dark pause of its cycle, or fades out if it has none.
 [npu]
 enabled = true
-effect = "breath"     # any built-in or custom effect (should be a looping one)
+effect = "twinkle"    # any built-in or custom effect
 poll_ms = 250
 idle_ms = 2000
 # sysfs = "/sys/class/accel/accel0/device/npu_busy_time_us"
@@ -27,13 +29,13 @@ idle_ms = 2000
 # Each [[key]] fires when all its keys are held down together (order does not
 # matter). Names are evdev key names (see /usr/include/linux/input-event-codes.h
 # or run `sudo tplight keys`); the KEY_ prefix is optional.
-# duration_ms = 0 means: one playthrough for non-looping effects, 3 s for looping ones.
+# One-shot effects always play to the end. For looping effects duration_ms sets
+# how long they run (default 3000).
 
 # Copilot key (on Linux it is reported as Meta + Shift + F23).
 [[key]]
 keys = ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_F23"]
 effect = "circle"
-duration_ms = 3000
 
 # Example of another combo: Ctrl+Alt+Space shows the comet for 3 s.
 # [[key]]
@@ -43,10 +45,11 @@ duration_ms = 3000
 
 # --- Custom effects --------------------------------------------------------------
 # frames = [[l1, l2, l3, l4, ms], ...]
-#   l1..l4: lamp brightness 0..100 (L1 top-right, L2 bottom-right,
-#           L3 bottom-left, L4 top-left - probable physical layout)
-#   ms:     frame duration, 10..2550 ms (10 ms resolution)
+#   l1..l4: lamp brightness 0..100
+#   ms:     frame duration, 10..2550 ms (10 ms steps)
 # At most 48 frames. loop = true repeats the effect until it is stopped.
+# Order of the lamps around the touchpad: L2 -> L4 -> L3 -> L1.
+# `tplight import-acer` adds the original Windows animations here.
 [effects.heartbeat]
 description = "double beat, then a pause"
 loop = true
@@ -58,9 +61,9 @@ frames = [
 ]
 
 [effects.diagonal]
-description = "alternating diagonals"
+description = "the two lamp pairs blink in turn"
 loop = true
 frames = [
-  [100,   0, 100,   0, 300],
-  [  0, 100,   0, 100, 300],
+  [  0, 100, 100,   0, 300],
+  [100,   0,   0, 100, 300],
 ]

@@ -23,7 +23,7 @@ descriptor contains the vendor collection above.
 All communication uses HID **feature reports** (`HIDIOCSFEATURE` /
 `HIDIOCGFEATURE` ioctls on the hidraw node).
 
-## Report 0x02 – lighting frame / command (write-only)
+## Report 0x02: lighting frame or command (write-only)
 
 7 bytes including the report ID:
 
@@ -48,19 +48,23 @@ Flags:
 
 Reading report 0x02 back returns 0 bytes (it is not readable).
 
-### Lamp layout *(probable)*
+### Lamp order
 
-The vendor software models the four lamps as a 2×2 matrix visited in circular
-order:
+The vendor's "circle" animation (played when the Copilot key is pressed) lights
+the lamps one after the other in this order and then turns them off in the
+same order:
 
-| Lamp | Matrix position | Physical position *(probable)* |
-|------|-----------------|--------------------------------|
-| L1   | row 0, col 1    | top-right                      |
-| L2   | row 1, col 1    | bottom-right                   |
-| L3   | row 1, col 0    | bottom-left                    |
-| L4   | row 0, col 0    | top-left                       |
+```
+L2 -> L4 -> L3 -> L1 -> (back to L2)
+```
 
-So L1 → L2 → L3 → L4 is a clockwise walk around the touchpad.
+So this is the order of the lamps around the touchpad. Lamps that are opposite
+each other in this ring form two pairs, L2 + L3 and L4 + L1; the vendor's NPU
+animation fades between these two pairs.
+
+Which corner each lamp is in has not been checked, and neither has the
+direction (clockwise or not). An earlier version of this document assumed
+L1 -> L2 -> L3 -> L4, which does not match the vendor animation.
 
 ### Commands
 
@@ -79,14 +83,43 @@ firmware stores them and plays them on its own using each frame's `D` value.
 The first frame carries `0x02`, the last one `0x04` (plus `0x08` to loop).
 A single steady looping frame therefore uses flags `0x0E`.
 
-The vendor software uses effects of up to about 44 frames; `tplight` limits
+The vendor software uses effects of up to 44 frames; `tplight` limits
 effects to 48 frames.
 
 **Quirk:** if an effect is already playing, the first upload of a new effect
 only interrupts the running one (lights go off). The new effect must be sent
 **twice in a row** to start. Status and terminate commands are sent once.
 
-## Report 0x01 – lighting state (read-only)
+## How the vendor service uses it *(from static analysis)*
+
+This was read from the disassembly of the Windows service component
+(`AcerLightingComponent.exe`); it was not observed on Windows.
+
+The animations are files in the service's `Frames` folder: `<Name>.ini` with
+`[Frame] FrameAmount`, `[Speed] fps` and `[Duration] LifeTime`, plus one
+`<Name>_NN.ini` per frame with `[lamp1]`..`[lamp4]` `brightness`.
+Each frame lasts `1000 / fps` ms (integer division). `LifeTime` is read but
+its value is not used when the touchpad effect is set.
+
+- Copilot key: the touchpad plays `Circle_R` once (no loop flag). The
+  animation starts and ends dark, so nothing is sent at the end. (The service
+  also plays `Blink` on the Copilot key's own LED, which is a different
+  device.)
+- NPU: the service samples NPU utilization once per second. When it goes
+  above its threshold, the touchpad plays `Twinkle_R` with the loop flag.
+  The NPU state is checked again once per animation cycle
+  (`FrameAmount * 1000 / fps` ms, about 3.4 s for `Twinkle_R`); when the NPU
+  is idle at that point the service sends *terminate*. Since the animation
+  ends with a few dark frames, the light simply stays off.
+- After a Copilot key press while the NPU is busy, `Twinkle_R` is started
+  again after about one cycle.
+
+`tplight daemon` does the same with its built-in `circle` and `twinkle`
+effects (or with the original files, see `tplight import-acer`). It stops a
+looping effect in the middle of its dark pause, and fades out effects that
+have no dark pause.
+
+## Report 0x01: lighting state (read-only)
 
 `GET_FEATURE` with a 3-byte buffer (ID + 2 bytes). Payload byte 0, bit 0 =
 lighting enabled. `tplight status` shows it; the daemon uses it to re-enable

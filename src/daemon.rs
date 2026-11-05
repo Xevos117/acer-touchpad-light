@@ -1,6 +1,10 @@
 //! The background service: NPU activity + key combos -> light effects.
 //!
 //! Priority: key effect (for its duration) > NPU effect (while the NPU is busy) > idle (off).
+//!
+//! Mirrors the vendor service: the NPU effect is played *looping* while the NPU
+//! is busy and stopped at a natural point (the dark pause of its cycle); a key
+//! effect is a one-shot that is always played to its end.
 
 use std::fs;
 use std::path::PathBuf;
@@ -37,13 +41,21 @@ pub fn decide(key: Option<(usize, Instant)>, npu_active: bool, now: Instant) -> 
     }
 }
 
-/// How long a key-triggered effect is shown.
+/// How long a key-triggered effect is shown. One-shot effects are never cut
+/// short: `duration_ms` can only extend them (keeping the last frame).
 pub fn key_duration(effect: &Effect, duration_ms: u64) -> Duration {
     Duration::from_millis(match duration_ms {
         0 if effect.looping => DEFAULT_LOOP_KEY_MS,
-        0 => effect.cycle_ms(),
-        d => d,
+        d if effect.looping => d,
+        d => d.max(effect.cycle_ms()),
     })
+}
+
+/// The NPU effect is always repeated while the NPU is busy (the vendor service
+/// plays its NPU animation with the loop flag), whatever its own `loop` setting.
+pub fn npu_effect(mut e: Effect) -> Effect {
+    e.looping = true;
+    e
 }
 
 /// Tracks the intel_vpu busy-time counter.
@@ -122,10 +134,10 @@ struct Player {
     light: Light,
     brightness: u8,
     reenable: bool,
-    /// Looping effect currently playing and when it started (for fade-out phase).
+    /// Effect currently playing and when it started.
     playing: Option<(Effect, Instant)>,
-    /// A fade-out is running; send terminate once it is over.
-    fade_until: Option<Instant>,
+    /// The effect is being ended: send terminate at this time.
+    terminate_at: Option<Instant>,
 }
 
 impl Player {
@@ -137,36 +149,48 @@ impl Player {
                     eprintln!("lighting was disabled, enabling it");
                     self.light.enable()?;
                 }
-                self.fade_until = None;
+                self.terminate_at = None;
                 self.light.play(e, self.brightness)?;
-                self.playing = e.looping.then(|| (e.clone(), Instant::now()));
+                self.playing = Some((e.clone(), Instant::now()));
                 Ok(())
             }
         }
     }
 
-    /// Ends the current effect: looping effects fade out from where they are,
-    /// anything else is terminated right away.
+    /// Ends the current effect without cutting it off:
+    /// * a one-shot effect still running is left to finish, then terminated;
+    /// * a looping effect with a dark pause keeps running until it reaches
+    ///   that pause, then it is terminated (no visible jump);
+    /// * any other looping effect fades out from where it is.
     fn end(&mut self) -> std::io::Result<()> {
-        match self.playing.take() {
-            Some((e, started)) => {
-                let elapsed = started.elapsed().as_millis() as u64;
-                let fade = e.fade_out(e.frame_at(elapsed));
-                self.light.play(&fade, self.brightness)?;
-                self.fade_until = Some(Instant::now() + Duration::from_millis(fade.cycle_ms()));
-                Ok(())
-            }
-            None => {
-                self.fade_until = None;
-                self.light.terminate()
-            }
+        let now = Instant::now();
+        let Some((e, started)) = self.playing.take() else {
+            self.terminate_at = None;
+            return self.light.terminate();
+        };
+        let elapsed = now.duration_since(started).as_millis() as u64;
+        let wait = if !e.looping {
+            e.cycle_ms().saturating_sub(elapsed)
+        } else if let Some(ms) = e.ms_until_dark(elapsed) {
+            ms
+        } else {
+            let fade = e.fade_out(e.frame_at(elapsed));
+            self.light.play(&fade, self.brightness)?;
+            fade.cycle_ms()
+        };
+        if wait == 0 {
+            self.terminate_at = None;
+            self.light.terminate()
+        } else {
+            self.terminate_at = Some(now + Duration::from_millis(wait));
+            Ok(())
         }
     }
 
-    /// Sends the pending terminate once a fade-out has finished.
+    /// Sends the pending terminate once the effect has reached its end.
     fn tick(&mut self, now: Instant) -> std::io::Result<()> {
-        if self.fade_until.is_some_and(|t| now >= t) {
-            self.fade_until = None;
+        if self.terminate_at.is_some_and(|t| now >= t) {
+            self.terminate_at = None;
             self.light.terminate()?;
         }
         Ok(())
@@ -187,6 +211,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let npu_effect = if cfg.npu.enabled {
         Some(
             lib.get(&cfg.npu.effect)
+                .map(npu_effect)
                 .ok_or_else(|| format!("unknown effect '{}'", cfg.npu.effect))?,
         )
     } else {
@@ -226,7 +251,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         brightness: cfg.brightness,
         reenable: cfg.reenable,
         playing: None,
-        fade_until: None,
+        terminate_at: None,
     };
     let mut npu = NpuMonitor::new(cfg.npu.sysfs.clone());
     let poll = Duration::from_millis(cfg.npu.poll_ms);
@@ -295,7 +320,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         }
 
         if let Err(e) = player.tick(now) {
-            eprintln!("terminate after fade-out failed: {e}");
+            eprintln!("terminate at end of effect failed: {e}");
         }
 
         let want = decide(
@@ -339,10 +364,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
     if let Err(e) = player.show(None) {
         eprintln!("stop failed: {e}");
     }
-    // let a fade-out finish (bounded), then make sure everything is off
-    if let Some(t) = player.fade_until.take() {
+    // let the effect reach its end (bounded), then make sure everything is off
+    if let Some(t) = player.terminate_at.take() {
         let wait = t.saturating_duration_since(Instant::now());
-        std::thread::sleep(wait.min(Duration::from_secs(3)));
+        std::thread::sleep(wait.min(Duration::from_secs(4)));
     }
     if let Err(e) = player.light.terminate() {
         eprintln!("terminate failed: {e}");
@@ -377,6 +402,25 @@ mod tests {
             key_duration(&builtin("comet").unwrap(), 0),
             Duration::from_millis(3000)
         );
-        assert_eq!(key_duration(&pulse, 1234), Duration::from_millis(1234));
+        // one-shot effects are never cut short...
+        assert_eq!(
+            key_duration(&pulse, 10),
+            Duration::from_millis(pulse.cycle_ms())
+        );
+        // ...but can be held longer
+        assert_eq!(key_duration(&pulse, 9000), Duration::from_millis(9000));
+        let circle = builtin("circle").unwrap();
+        assert_eq!(
+            key_duration(&circle, 3000),
+            Duration::from_millis(circle.cycle_ms())
+        );
+        let comet = builtin("comet").unwrap();
+        assert_eq!(key_duration(&comet, 1234), Duration::from_millis(1234));
+    }
+
+    #[test]
+    fn npu_effect_always_loops() {
+        assert!(npu_effect(builtin("circle").unwrap()).looping);
+        assert!(npu_effect(builtin("twinkle").unwrap()).looping);
     }
 }

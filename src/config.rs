@@ -57,7 +57,7 @@ pub struct NpuConfig {
 }
 
 fn default_npu_effect() -> String {
-    "breath".into()
+    "twinkle".into()
 }
 fn default_poll_ms() -> u64 {
     250
@@ -86,8 +86,9 @@ pub struct KeyBinding {
     pub keys: Vec<String>,
     #[serde(default = "default_key_effect")]
     pub effect: String,
-    /// How long the effect is shown. 0/absent: one playthrough for non-looping
-    /// effects, 3 s for looping ones.
+    /// How long the effect is shown. One-shot effects always play to the end
+    /// (a longer value holds their last frame); looping ones run for this long,
+    /// 3 s when 0/absent.
     #[serde(default)]
     pub duration_ms: u64,
 }
@@ -236,7 +237,7 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.brightness, 100);
         assert!(c.npu.enabled);
-        assert_eq!(c.npu.effect, "breath");
+        assert_eq!(c.npu.effect, "twinkle");
         assert_eq!(c.keys.len(), 1);
         assert_eq!(
             c.key_combos().unwrap(),
